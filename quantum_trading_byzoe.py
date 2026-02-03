@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v5 - Final (ATR)",
+    page_title="GSS Quantum Analytics v6 - ID Friendly",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -138,10 +138,29 @@ def get_market_data(ticker, period="1y"):
             else:
                 return None
 
-        # --- INDIKATOR TEKNIKAL ---
+        # --- KONVERSI SEMUA HARGA KE IDR ---
+        # Fungsi konversi
+        def convert_to_idr(price_usd, is_gold=False):
+            usd_idr = get_exchange_rate()
+            if is_gold:
+                return (price_usd / 31.1035) * usd_idr
+            else:
+                return price_usd * usd_idr
+
+        # Konversi kolom harga utama
+        df['Close_IDR'] = df['Close'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+        df['Open_IDR'] = df['Open'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+        df['High_IDR'] = df['High'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+        df['Low_IDR'] = df['Low'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+
+        # --- INDIKATOR TEKNIKAL (dihitung di basis USD untuk konsistensi, lalu dikonversi) ---
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         df['EMA_50'] = ta.ema(df['Close'], length=50)
         df['EMA_200'] = ta.ema(df['Close'], length=200)
+        df['EMA_20_IDR'] = df['EMA_20'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+        df['EMA_50_IDR'] = df['EMA_50'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+        df['EMA_200_IDR'] = df['EMA_200'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+
         df['RSI'] = ta.rsi(df['Close'], length=14)
 
         macd = ta.macd(df['Close'], fast=12, slow=26, signal=9)
@@ -155,24 +174,29 @@ def get_market_data(ticker, period="1y"):
             df['BB_UPPER'] = bb.iloc[:, 0]
             df['BB_MIDDLE'] = bb.iloc[:, 1]
             df['BB_LOWER'] = bb.iloc[:, 2]
+            # Konversi BB ke IDR
+            df['BB_UPPER_IDR'] = df['BB_UPPER'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+            df['BB_MIDDLE_IDR'] = df['BB_MIDDLE'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
+            df['BB_LOWER_IDR'] = df['BB_LOWER'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
 
         adx = ta.adx(df['High'], df['Low'], df['Close'], length=14)
         if adx is not None:
             df['ADX'] = adx['ADX_14']
 
         df['VOLATILITY_30D'] = df['Close'].rolling(window=30).std()
+        df['VOLATILITY_30D_IDR'] = df['Close_IDR'].rolling(window=30).std()
 
-        # --- INOVASI BARU: Average True Range (ATR) ---
-        # Pandas-ta memiliki fungsi ATR built-in
+        # --- INOVASI: Average True Range (ATR) ---
         atr = ta.atr(df['High'], df['Low'], df['Close'], length=14)
         if atr is not None:
             df['ATR'] = atr
         else:
-            # Fallback manual jika pandas_ta gagal
             df['True_Range'] = df['High'] - df['Low']
             df['True_Range'] = df['True_Range'].combine(df['High'] - df['Close'].shift(), lambda x, y: max(x, abs(y)), fill_value=0)
             df['True_Range'] = df['True_Range'].combine(df['Close'].shift() - df['Low'], lambda x, y: max(x, abs(y)), fill_value=0)
             df['ATR'] = df['True_Range'].rolling(window=14).mean()
+        # Konversi ATR ke IDR
+        df['ATR_IDR'] = df['ATR'].apply(lambda x: convert_to_idr(x, ASSETS[selected_asset_name]["is_gold"]) if selected_asset_name else x * get_exchange_rate())
 
         return df
 
@@ -190,22 +214,28 @@ def analyze_signal(df):
     reasons = []
     volatility = last['VOLATILITY_30D'] if pd.notna(last['VOLATILITY_30D']) else 0.0
     adx_value = last['ADX'] if pd.notna(last['ADX']) else 0.0
-    atr_value = last['ATR'] if pd.notna(last['ATR']) else 0.0 # Ambil nilai ATR
+    atr_value = last['ATR'] if pd.notna(last['ATR']) else 0.0
+    atr_value_idr = last['ATR_IDR'] if pd.notna(last['ATR_IDR']) else 0.0 # Ambil nilai ATR dalam IDR
 
     # 1. ANALISIS TREN (EMA)
     price_now = last['Close']
+    price_now_idr = last['Close_IDR']
     ema200 = last['EMA_200']
+    ema200_idr = last['EMA_200_IDR']
+
     if pd.isna(ema200):
         reasons.append("Data EMA 200 belum cukup.")
     else:
         if price_now > ema200:
             gap = ((price_now - ema200) / ema200) * 100
+            gap_idr = ((price_now_idr - ema200_idr) / ema200_idr) * 100
             score += 25
-            reasons.append(f"Harga berada {gap:.1f}% DI ATAS garis tren jangka panjang (EMA 200). Pasar Bullish.")
+            reasons.append(f"Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}) berada {gap:.1f}% DI ATAS garis tren jangka panjang (EMA 200: ${ema200:.2f} / Rp {ema200_idr:,.0f}). Pasar Bullish.")
         else:
             gap = ((ema200 - price_now) / ema200) * 100
+            gap_idr = ((ema200_idr - price_now_idr) / ema200_idr) * 100
             score -= 25
-            reasons.append(f"Harga berada {gap:.1f}% DI BAWAH garis tren jangka panjang (EMA 200). Pasar Bearish.")
+            reasons.append(f"Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}) berada {gap:.1f}% DI BAWAH garis tren jangka panjang (EMA 200: ${ema200:.2f} / Rp {ema200_idr:,.0f}). Pasar Bearish.")
 
     # Golden Cross / Death Cross
     if pd.notna(last['EMA_50']) and pd.notna(last['EMA_200']):
@@ -223,16 +253,16 @@ def analyze_signal(df):
     else:
         if rsi < 30:
             score += 35
-            reasons.append(f"RSI Sangat Murah (Oversold) di level {rsi:.1f}. Potensi pantulan harga tinggi!")
+            reasons.append(f"RSI Sangat Murah (Oversold) di level {rsi:.1f}. Potensi pantulan harga tinggi! Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
         elif rsi > 70:
             score -= 25
-            reasons.append(f"RSI Sangat Mahal (Overbought) di level {rsi:.1f}. Hati-hati koreksi.")
+            reasons.append(f"RSI Sangat Mahal (Overbought) di level {rsi:.1f}. Hati-hati koreksi. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
         elif 30 <= rsi <= 50:
             score += 10
-            reasons.append(f"RSI di level {rsi:.1f} (Zona Akumulasi). Masih aman untuk masuk.")
+            reasons.append(f"RSI di level {rsi:.1f} (Zona Akumulasi). Masih aman untuk masuk. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
         else:
             score += 5
-            reasons.append(f"RSI di level {rsi:.1f} (Zona Pertumbuhan). Momentum positif.")
+            reasons.append(f"RSI di level {rsi:.1f} (Zona Pertumbuhan). Momentum positif. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
 
     # 3. MACD Dynamic
     macd_val = last['MACD']
@@ -242,42 +272,42 @@ def analyze_signal(df):
     else:
         if macd_val > macd_sig:
             score += 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal. Momentum beli aktif.")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal. Momentum beli aktif. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
         else:
             score -= 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada.")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
 
     # --- INOVASI SEBELUMNYA: Logika dari Indikator Baru ---
     # 4. Bollinger Bands
     if pd.notna(last['BB_UPPER']) and pd.notna(last['BB_LOWER']):
         if price_now > last['BB_UPPER']:
             score -= 30
-            reasons.append(f"Harga MENEMBUS Band Atas. Potensi overbought, koreksi mungkin terjadi.")
+            reasons.append(f"Harga MENEMBUS Band Atas (${last['BB_UPPER']:.2f} / Rp {last['BB_UPPER_IDR']:,.0f}). Potensi overbought, koreksi mungkin terjadi.")
         elif price_now < last['BB_LOWER']:
             score += 30
-            reasons.append(f"Harga MENEMBUS Band Bawah. Potensi oversold, bounce mungkin terjadi.")
+            reasons.append(f"Harga MENEMBUS Band Bawah (${last['BB_LOWER']:.2f} / Rp {last['BB_LOWER_IDR']:,.0f}). Potensi oversold, bounce mungkin terjadi.")
         else:
-            reasons.append(f"Harga berada di dalam Bollinger Bands. Rentang normal.")
+            reasons.append(f"Harga berada di dalam Bollinger Bands. Rentang normal (${last['BB_LOWER']:.2f} - ${last['BB_UPPER']:.2f} / Rp {last['BB_LOWER_IDR']:,.0f} - Rp {last['BB_UPPER_IDR']:,.0f}).")
 
     # 5. ADX (Kekuatan Tren)
     if adx_value > 25:
         if abs(score) > 20:
-            score = int(max(0, min(100, (50 + score) * 1.1))) # Gunakan skor sebelum ADX dikalikan
+            score = int(max(0, min(100, (50 + score) * 1.1)))
             reasons.append(f"ADX menunjukkan tren sangat kuat (>{adx_value:.1f}). Sinyal dipertegas.")
         else:
             reasons.append(f"ADX menunjukkan tren sedang ({adx_value:.1f}). Harap konfirmasi sinyal lain.")
     else:
         reasons.append(f"ADX menunjukkan tren lemah ({adx_value:.1f}). Sinyal bisa jadi tidak akurat.")
 
-    # --- INOVASI BARU: Logika berdasarkan ATR ---
+    # --- INOVASI: Logika berdasarkan ATR ---
     # 6. ATR (Average True Range / Volatilitas)
     if atr_value > 0:
         price_change_abs = abs(price_now - prev['Close'])
         if price_change_abs > atr_value:
-            reasons.append(f"Pergerakan harga (${price_change_abs:.2f}) MELEBIHI ATR (${atr_value:.2f}), menunjukkan aktivitas tinggi.")
+            reasons.append(f"Pergerakan harga (${price_change_abs:.2f} / Rp {abs(price_now_idr - prev['Close_IDR']):,.0f}) MELEBIHI ATR (${atr_value:.2f} / Rp {atr_value_idr:.0f}), menunjukkan aktivitas tinggi.")
         elif price_change_abs < atr_value * 0.5:
-            reasons.append(f"Pergerakan harga (${price_change_abs:.2f}) di bawah separuh ATR, menunjukkan konsolidasi.")
-        reasons.append(f"Level volatilitas saat ini (ATR 14d): ${atr_value:.2f}. Ini penting untuk manajemen risiko (Stop-Loss).")
+            reasons.append(f"Pergerakan harga (${price_change_abs:.2f} / Rp {abs(price_now_idr - prev['Close_IDR']):,.0f}) di bawah separuh ATR, menunjukkan konsolidasi.")
+        reasons.append(f"Level volatilitas saat ini (ATR 14d): ${atr_value:.2f} / Rp {atr_value_idr:.0f}. Ini penting untuk manajemen risiko (Stop-Loss).")
     else:
         reasons.append("Data ATR tidak tersedia untuk analisis volatilitas.")
 
@@ -291,8 +321,8 @@ def analyze_signal(df):
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v5</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Intelligence (ATR Added)</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v6</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - ID-Friendly Market Intelligence</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -305,43 +335,35 @@ def main():
     with st.spinner("Menghubungkan ke satelit data global..."):
         usd_idr = get_exchange_rate()
         st.sidebar.metric("Kurs USD/IDR Hari Ini", f"Rp {usd_idr:,.0f}")
-        df = get_market_data(asset_info['ticker'])
+        df = get_market_data(selected_asset_name) # Kirim nama aset untuk konversi dinamis
 
     if df is not None and not df.empty:
         last_close_usd = df['Close'].iloc[-1]
+        last_close_idr = df['Close_IDR'].iloc[-1]
         prev_close_usd = df['Close'].iloc[-2]
+        prev_close_idr = df['Close_IDR'].iloc[-2]
         change_pct = ((last_close_usd - prev_close_usd) / prev_close_usd) * 100
+        change_idr = last_close_idr - prev_close_idr
 
-        # --- LOGIKA KONVERSI HARGA ---
-        if asset_info['is_gold']:
-            price_idr = (last_close_usd / 31.1035) * usd_idr
-            price_usd_display = last_close_usd
-            unit_label = "/ gram"
-            usd_label = "/ troy oz"
-        else:
-            price_idr = last_close_usd * usd_idr
-            price_usd_display = last_close_usd
-            unit_label = "/ unit"
-            usd_label = "/ USD"
-
-        # --- TAMPILAN HARGA DUAL VERSION ---
-        st.markdown("### 💰 Harga Terkini (Real-Time)")
+        # --- TAMPILAN HARGA DUAL VERSION (IDR di depan untuk kejelasan) ---
+        st.markdown("### 💰 Harga Terkini (Real-Time - USD & IDR)")
         c1, c2, c3 = st.columns([1.5, 1.5, 2])
 
         with c1:
-            st.markdown(f"<div class='price-box'><div class='small-font'>Harga Rupiah (Estimasi Pluang)</div><div class='big-font' style='color:#00ff00'>Rp {price_idr:,.0f}</div><div class='small-font'>{unit_label}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='price-box'><div class='small-font'>Harga Rupiah (Estimasi)</div><div class='big-font' style='color:#00ff00'>Rp {last_close_idr:,.0f}</div><div class='small-font'>/ unit</div></div>", unsafe_allow_html=True)
 
         with c2:
-            st.markdown(f"<div class='price-box'><div class='small-font'>Harga Global (USD)</div><div class='big-font' style='color:#FFD700'>${price_usd_display:,.2f}</div><div class='small-font'>{usd_label}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='price-box'><div class='small-font'>Harga Global (USD)</div><div class='big-font' style='color:#FFD700'>${last_close_usd:.2f}</div><div class='small-font'>/ unit</div></div>", unsafe_allow_html=True)
 
         with c3:
             color = "green" if change_pct >= 0 else "red"
-            st.markdown(f"<div class='price-box'><div class='small-font'>Perubahan 24 Jam</div><div class='big-font' style='color:{color}'>{change_pct:+.2f}%</div><div class='small-font'>vs Kemarin</div></div>", unsafe_allow_html=True)
+            color_idr = "green" if change_idr >= 0 else "red"
+            st.markdown(f"<div class='price-box'><div class='small-font'>Perubahan 24 Jam</div><div class='big-font' style='color:{color}'>{change_pct:+.2f}%</div><div class='small-font' style='color:{color_idr}'>Rp {change_idr:,.0f}</div></div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
         # 2. ANALISIS QUANTUM SCORE, VOLATILITAS, dan ATR
-        score, reasons, volatility, atr = analyze_signal(df) # Terima nilai ATR
+        score, reasons, volatility, atr = analyze_signal(df)
 
         st.markdown("### 🔮 Quantum Signal & Risk Analysis")
         cols_sig1, cols_sig2, cols_risk = st.columns([1, 2, 1])
@@ -375,7 +397,7 @@ def main():
                 st.markdown(f"<div class='signal-box neutral-signal'>NEUTRAL / WAIT ✋<br><span style='font-size:1rem'>Tunggu Konfirmasi</span></div>", unsafe_allow_html=True)
 
             st.write(" ")
-            st.caption("🔍 **Alasan Logis (Berdasarkan Data Live):**")
+            st.caption("🔍 **Alasan Logis (Berdasarkan Data Live - USD & IDR):**")
             for reason in reasons:
                  hl_class = ""
                  if "Oversold" in reason or "bounce" in reason.lower():
@@ -405,43 +427,95 @@ def main():
                      risk_level_str = "Tinggi"
                      risk_style = "risk-high"
 
-             st.markdown(f"<div class='info-card'><h4>📊 Risiko (Volatilitas 30D)</h4><p class='medium-font'>{risk_level_str}</p><p class='small-font'>Std Dev: ${volatility:.2f}</p></div>", unsafe_allow_html=True)
+             st.markdown(f"<div class='info-card'><h4>📊 Risiko (Volatilitas 30D)</h4><p class='medium-font'>{risk_level_str}</p><p class='small-font'>Std Dev: ${volatility:.2f} / Rp {df['VOLATILITY_30D_IDR'].iloc[-1]:,.0f}</p></div>", unsafe_allow_html=True)
              
              adx_val = df['ADX'].iloc[-1] if pd.notna(df['ADX'].iloc[-1]) else 0.0
              adx_status = "Lemah" if adx_val < 25 else ("Sedang" if adx_val < 50 else "Kuat")
              st.markdown(f"<div class='info-card'><h4>🧭 Kekuatan Tren (ADX)</h4><p class='medium-font'>{adx_val:.1f}</p><p class='small-font'>{adx_status} ({'<25' if adx_val < 25 else ('25-50' if adx_val < 50 else '>50')})</p></div>", unsafe_allow_html=True)
 
-             # --- INOVASI BARU: Tampilkan ATR ---
+             # --- INOVASI: Tampilkan ATR ---
              atr_val = df['ATR'].iloc[-1] if pd.notna(df['ATR'].iloc[-1]) else 0.0
+             atr_val_idr = df['ATR_IDR'].iloc[-1] if pd.notna(df['ATR_IDR'].iloc[-1]) else 0.0
              if atr_val > 0:
-                 st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>${atr_val:.2f}</p><p class='small-font'>Rentang rata-rata pergerakan.</p></div>", unsafe_allow_html=True)
+                 st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>${atr_val:.2f} / Rp {atr_val_idr:,.0f}</p><p class='small-font'>Rentang rata-rata pergerakan.</p></div>", unsafe_allow_html=True)
              else:
                  st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>N/A</p><p class='small-font'>Data tidak tersedia.</p></div>", unsafe_allow_html=True)
 
 
-        # 3. CHART UTAMA dengan Bollinger Bands
-        st.markdown("### 📉 Grafik Teknikal Lanjutan")
+        # 3. CHART UTAMA dengan Bollinger Bands dan harga IDR di tooltip
+        st.markdown("### 📉 Grafik Teknikal Lanjutan (USD & IDR)")
         fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price USD', opacity=0.8))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50', visible='legendonly'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='blue', width=2), name='EMA 200', visible='legendonly'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_UPPER'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1), name='BB Upper', fill=None))
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_LOWER'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name='BB Lower', fill='tonexty'))
+
+        # Candlestick (dengan tooltip IDR)
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            name='Price (USD)',
+            hovertemplate='<b>%{x}</b><br>' +
+                          'Open: $%{open}<br>' +
+                          'High: $%{high}<br>' +
+                          'Low: $%{low}<br>' +
+                          'Close: $%{close}<br>' +
+                          '<extra></extra>',
+            opacity=0.8
+        ))
+
+        # Candlestick (overlay untuk harga IDR - tidak ditampilkan di legenda, hanya tooltip)
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['Open_IDR'],
+            high=df['High_IDR'],
+            low=df['Low_IDR'],
+            close=df['Close_IDR'],
+            name='Price (IDR)',
+            visible=False, # Sembunyikan dari legenda dan grafik default
+            showlegend=False,
+            hovertemplate='<b>%{x}</b><br>' +
+                          'Open: Rp %{open:,.0f}<br>' +
+                          'High: Rp %{high:,.0f}<br>' +
+                          'Low: Rp %{low:,.0f}<br>' +
+                          'Close: Rp %{close:,.0f}<br>' +
+                          '<extra></extra>',
+            opacity=0.8
+        ))
+
+        # EMAs
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50 (USD)', visible='legendonly'))
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='blue', width=2), name='EMA 200 (USD)', visible='legendonly'))
+        # EMAs dalam IDR (tidak ditampilkan di legenda default)
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50_IDR'], line=dict(color='orange', width=1.5, dash='dot'), name='EMA 50 (IDR)', visible=False, showlegend=False))
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200_IDR'], line=dict(color='blue', width=2, dash='dot'), name='EMA 200 (IDR)', visible=False, showlegend=False))
+
+        # Bollinger Bands
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_UPPER'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1), name='BB Upper (USD)', fill=None, visible='legendonly'))
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_LOWER'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name='BB Lower (USD)', fill='tonexty', visible='legendonly'))
+        # Bollinger Bands dalam IDR (tidak ditampilkan di legenda default)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_UPPER_IDR'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1, dash='dash'), name='BB Upper (IDR)', fill=None, visible=False, showlegend=False))
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_LOWER_IDR'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1, dash='dash'), name='BB Lower (IDR)', fill='tonexty', visible=False, showlegend=False))
 
         fig.update_layout(
             xaxis_rangeslider_visible=False,
             height=600,
             template="plotly_dark",
-            title=f"Pergerakan Global {selected_asset_name} (Basis USD) dengan Bollinger Bands",
+            title=f"Pergerakan Global {selected_asset_name} (Basis USD & IDR)",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- INOVASI: Tabel Data Terbaru ---
-        st.markdown("### 🧮 Data Terbaru (Termasuk Indikator Baru)")
-        latest_data = df[['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'BB_UPPER', 'BB_LOWER', 'ADX', 'ATR']].tail(1).round(2)
-        latest_data.index = [latest_data.index[-1].strftime('%Y-%m-%d')]
-        st.dataframe(latest_data, use_container_width=True)
+        # --- INOVASI: Tabel Data Terbaru (dengan kolom IDR) ---
+        st.markdown("### 🧮 Data Terbaru (USD & IDR)")
+        # Pilih kolom yang relevan dan pasangkan dengan versi IDR nya
+        latest_data_usd = df[['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'BB_UPPER', 'BB_LOWER', 'ADX', 'ATR']].tail(1).round(2)
+        latest_data_idr = df[['Close_IDR', 'EMA_20_IDR', 'EMA_50_IDR', 'EMA_200_IDR', 'RSI', 'MACD', 'BB_UPPER_IDR', 'BB_LOWER_IDR', 'ADX', 'ATR_IDR']].tail(1).round(0) # Rupiah biasanya integer
+        latest_data_idr.columns = [col.replace('_IDR', '_Rp') for col in latest_data_idr.columns] # Ubah nama kolom
+
+        # Gabungkan kolom USD dan IDR
+        latest_data_combined = pd.concat([latest_data_usd, latest_data_idr], axis=1)
+        latest_data_combined.index = [latest_data_combined.index[-1].strftime('%Y-%m-%d')]
+        st.dataframe(latest_data_combined, use_container_width=True)
 
     else:
         st.error("Gagal mengambil data atau data kosong. Silakan refresh halaman atau pilih aset lain.")
