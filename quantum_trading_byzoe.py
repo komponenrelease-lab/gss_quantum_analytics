@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v7 - Fixed Currency",
+    page_title="GSS Quantum Analytics v8 - Final Fix",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -308,8 +308,8 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v7</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - ID-Friendly Market Intelligence (Fixed)</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v8</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - ID-Friendly Market Intelligence (Final Fix)</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -322,7 +322,7 @@ def main():
     with st.spinner("Menghubungkan ke satelit data global..."):
         usd_idr = get_exchange_rate()
         st.sidebar.metric("Kurs USD/IDR Hari Ini", f"Rp {usd_idr:,.0f}")
-        df = get_market_data(asset_info['ticker']) # Kirim ticker aset
+        df = get_market_data(asset_info['ticker'])
 
     if df is not None and not df.empty:
         last_close_usd = df['Close'].iloc[-1]
@@ -431,7 +431,7 @@ def main():
                  st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>N/A</p><p class='small-font'>Data tidak tersedia.</p></div>", unsafe_allow_html=True)
 
 
-        # 3. CHART UTAMA (tetap dalam USD, tapi tooltip bisa diperluas di masa mendatang)
+        # 3. CHART UTAMA (tetap dalam USD)
         st.markdown("### 📉 Grafik Teknikal Lanjutan (USD)")
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price (USD)', opacity=0.8))
@@ -449,27 +449,40 @@ def main():
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- INOVASI: Tabel Data Terbaru (dengan kolom IDR yang dihitung saat ditampilkan) ---
+        # --- INOVASI: Tabel Data Terbaru (FIXED - Kolom Unik) ---
         st.markdown("### 🧮 Data Terbaru (USD & Estimasi IDR)")
         latest_data_usd = df[['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'BB_UPPER', 'BB_LOWER', 'ADX', 'ATR']].tail(1).round(2)
         latest_data_usd.index = [latest_data_usd.index[-1].strftime('%Y-%m-%d')]
 
-        # Buat DataFrame estimasi IDR
+        # Buat DataFrame estimasi IDR dengan nama kolom yang unik
         idr_cols = {}
+        # Kolom yang perlu dikonversi ke IDR
         for col in ['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'BB_UPPER', 'BB_LOWER', 'ATR']:
             if col in latest_data_usd.columns:
                 original_val = latest_data_usd[col].iloc[0]
                 converted_val = convert_price_to_idr(original_val, asset_info["is_gold"], usd_idr)
-                # Format sebagai string dengan koma ribuan untuk Rupiah
-                idr_cols[f"{col}_Rp"] = f"Rp {converted_val:,.0f}"
-        # Kolom lainnya yang tidak perlu dikonversi
+                idr_cols[f"{col}_Rp"] = converted_val # Simpan sebagai float untuk formatting nanti
+        # Kolom yang nilainya tetap (RSI, MACD, ADX), tambahkan akhiran _Rp untuk membedakan
         for col in ['RSI', 'MACD', 'ADX']:
              if col in latest_data_usd.columns:
-                idr_cols[f"{col}"] = latest_data_usd[col].iloc[0]
+                idr_cols[f"{col}_Rp"] = latest_data_usd[col].iloc[0]
 
         latest_data_idr_df = pd.DataFrame([idr_cols], index=latest_data_usd.index)
+
         # Gabungkan USD dan Estimasi IDR
-        latest_data_combined = pd.concat([latest_data_usd, latest_data_idr_df], axis=1)
+        # Penting: Gunakan concat dengan suffix untuk menghindari konflik nama
+        latest_data_combined = pd.concat([latest_data_usd.add_suffix('_Usd'), latest_data_idr_df], axis=1)
+        # Format ulang kolom Rupiah untuk tampilan (dengan koma)
+        cols_to_format = [col for col in latest_data_combined.columns if col.endswith('_Rp')]
+        for col in cols_to_format:
+            if pd.api.types.is_numeric_dtype(latest_data_combined[col]):
+                 if col.startswith('RSI') or col.startswith('MACD') or col.startswith('ADX'):
+                     # Format sebagai angka desimal untuk RSI, MACD, ADX
+                     latest_data_combined[col] = latest_data_combined[col].round(2)
+                 else:
+                     # Format sebagai Rupiah untuk harga
+                     latest_data_combined[col] = latest_data_combined[col].apply(lambda x: f"Rp {x:,.0f}")
+
         st.dataframe(latest_data_combined, use_container_width=True)
 
 
