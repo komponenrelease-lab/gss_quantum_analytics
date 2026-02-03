@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v2",
+    page_title="GSS Quantum Analytics v3 - Perbaikan",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -209,8 +209,8 @@ def analyze_signal(df):
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v2</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Market Intelligence</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v3</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Market Intelligence (Perbaikan Error)</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -310,7 +310,9 @@ def main():
                      highlight_color = "background-color: rgba(255, 75, 75, 0.2); padding: 2px 4px; border-radius: 3px;"
                  elif "tren sangat kuat" in reason.lower():
                      highlight_color = "background-color: rgba(255, 215, 0, 0.2); padding: 2px 4px; border-radius: 3px;"
-                 st.text(f"• <span style='{highlight_color}'>{reason}</span>", unsafe_allow_html=True)
+                 # --- PERBAIKAN: Gunakan st.markdown untuk HTML ---
+                 st.markdown(f"<p style='margin-bottom: 0.2em;'>• <span style='{highlight_color}'>{reason}</span></p>", unsafe_allow_html=True)
+
 
         with cols_risk:
              # --- INOVASI: Tampilan Risiko ---
