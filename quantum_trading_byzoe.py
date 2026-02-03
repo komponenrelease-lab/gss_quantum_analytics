@@ -7,32 +7,101 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v3 - Perbaikan",
+    page_title="GSS Quantum Analytics v4 - Final Fix",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- CSS CUSTOM (Tampilan Profesional GSS) ---
+# CSS ditempatkan di awal setelah konfigurasi halaman
 st.markdown("""
-    .main-header { font-size: 2.5rem; color: #FFD700; text-align: center; font-weight: bold; }
-    .sub-header { font-size: 1.2rem; color: #cccccc; text-align: center; margin-bottom: 2rem; }
-    .signal-box { padding: 20px; border-radius: 10px; text-align: center; font-size: 1.5rem; font-weight: bold; }
-    .price-box { background-color: #1E1E1E; padding: 15px; border-radius: 10px; text-align: center; border: 1px solid #444; }
-    .buy-signal { background-color: #004d00; color: #00ff00; border: 2px solid #00ff00; }
-    .sell-signal { background-color: #4d0000; color: #ff4b4b; border: 2px solid #ff4b4b; }
-    .neutral-signal { background-color: #4d4d00; color: #ffff00; border: 2px solid #ffff00; }
-    .risk-high { background-color: #4d0000; color: #ff4b4b; }
-    .risk-medium { background-color: #4d4d00; color: #ffff00; }
-    .risk-low { background-color: #004d00; color: #00ff00; }
-    .big-font { font-size: 1.8rem; font-weight: bold; }
-    .medium-font { font-size: 1.2rem; }
-    .small-font { font-size: 0.9rem; color: #888; }
-    .info-card { background-color: #2d2d2d; padding: 10px; border-radius: 8px; margin: 5px 0; }
+<style>
+    .main-header { 
+        font-size: 2.5rem; 
+        color: #FFD700; 
+        text-align: center; 
+        font-weight: bold; 
+        margin-bottom: 0.5rem;
+    }
+    .sub-header { 
+        font-size: 1.2rem; 
+        color: #cccccc; 
+        text-align: center; 
+        margin-bottom: 2rem; 
+    }
+    .signal-box { 
+        padding: 20px; 
+        border-radius: 10px; 
+        text-align: center; 
+        font-size: 1.5rem; 
+        font-weight: bold; 
+        margin-bottom: 1rem;
+    }
+    .price-box { 
+        background-color: #1E1E1E; 
+        padding: 15px; 
+        border-radius: 10px; 
+        text-align: center; 
+        border: 1px solid #444; 
+    }
+    .buy-signal { 
+        background-color: #004d00; 
+        color: #00ff00; 
+        border: 2px solid #00ff00; 
+    }
+    .sell-signal { 
+        background-color: #4d0000; 
+        color: #ff4b4b; 
+        border: 2px solid #ff4b4b; 
+    }
+    .neutral-signal { 
+        background-color: #4d4d00; 
+        color: #ffff00; 
+        border: 2px solid #ffff00; 
+    }
+    .risk-high { 
+        background-color: #4d0000; 
+        color: #ff4b4b; 
+    }
+    .risk-medium { 
+        background-color: #4d4d00; 
+        color: #ffff00; 
+    }
+    .risk-low { 
+        background-color: #004d00; 
+        color: #00ff00; 
+    }
+    .big-font { 
+        font-size: 1.8rem; 
+        font-weight: bold; 
+    }
+    .medium-font { 
+        font-size: 1.2rem; 
+    }
+    .small-font { 
+        font-size: 0.9rem; 
+        color: #888; 
+    }
+    .info-card { 
+        background-color: #2d2d2d; 
+        padding: 10px; 
+        border-radius: 8px; 
+        margin: 5px 0; 
+        border-left: 3px solid #FFD700;
+    }
+    /* Gaya untuk alasan sinyal */
+    .signal-reason {
+        margin-bottom: 0.2em;
+        line-height: 1.4;
+    }
+    .hl-overbought { background-color: rgba(255, 75, 75, 0.2); padding: 2px 4px; border-radius: 3px; }
+    .hl-oversold { background-color: rgba(0, 255, 0, 0.2); padding: 2px 4px; border-radius: 3px; }
+    .hl-strong-trend { background-color: rgba(255, 215, 0, 0.2); padding: 2px 4px; border-radius: 3px; }
+</style>
 """, unsafe_allow_html=True)
 
 # --- DAFTAR ASET GSS ---
-# Note: Gold Pluang basisnya GC=F tapi dikonversi ke Gram & IDR
 ASSETS = {
     "EMAS PLUANG (Gram)": {"ticker": "GC=F", "type": "Commodity", "is_gold": True},
     "PAX GOLD (PAXG)": {"ticker": "PAXG-USD", "type": "Crypto", "is_gold": False},
@@ -47,59 +116,50 @@ def get_exchange_rate():
     """Mengambil kurs USD ke IDR hari ini"""
     try:
         ticker = yf.Ticker("IDR=X")
-        # Ambil data hari ini
         data = ticker.history(period="1d")
         if not data.empty:
             return data['Close'].iloc[-1]
-        return 16000.0 # Fallback jika gagal
+        return 16000.0
     except:
         return 16000.0
 
-@st.cache_data(ttl=60) # Cache pendek biar data selalu fresh
+@st.cache_data(ttl=60)
 def get_market_data(ticker, period="1y"):
     """Mengambil data pasar dan menghitung indikator teknikal"""
     try:
         df = yf.download(ticker, period=period, interval="1d", progress=False)
-        # Handle MultiIndex
+        
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
         if df.empty or 'Close' not in df.columns:
-            # Coba fallback ke 'Adj Close' jika Close kosong
             if 'Adj Close' in df.columns:
                 df['Close'] = df['Adj Close']
             else:
                 return None
 
         # --- INDIKATOR TEKNIKAL ---
-        # 1. EMA (Exponential Moving Average)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         df['EMA_50'] = ta.ema(df['Close'], length=50)
         df['EMA_200'] = ta.ema(df['Close'], length=200)
-
-        # 2. RSI (Relative Strength Index)
         df['RSI'] = ta.rsi(df['Close'], length=14)
 
-        # 3. MACD
         macd = ta.macd(df['Close'], fast=12, slow=26, signal=9)
         if macd is not None:
             df['MACD'] = macd.iloc[:, 0]
             df['MACD_SIGNAL'] = macd.iloc[:, 2]
 
         # --- INOVASI: Indikator Baru ---
-        # 4. Bollinger Bands
         bb = ta.bbands(df['Close'], length=20, std=2)
         if bb is not None:
             df['BB_UPPER'] = bb.iloc[:, 0]
             df['BB_MIDDLE'] = bb.iloc[:, 1]
             df['BB_LOWER'] = bb.iloc[:, 2]
 
-        # 5. Average Directional Index (ADX)
         adx = ta.adx(df['High'], df['Low'], df['Close'], length=14)
         if adx is not None:
             df['ADX'] = adx['ADX_14']
 
-        # 6. Volatilitas (Deviasi Standar 30 hari)
         df['VOLATILITY_30D'] = df['Close'].rolling(window=30).std()
 
         return df
@@ -109,10 +169,7 @@ def get_market_data(ticker, period="1y"):
         return None
 
 def analyze_signal(df):
-    """
-    Analisis Sinyal Dinamis (Bukan Template).
-    Teks akan berubah sesuai angka real-time.
-    """
+    """Analisis Sinyal Dinamis (Bukan Template)."""
     if df is None: return 50, ["Data tidak tersedia"], 0.0
     last = df.iloc[-1]
     prev = df.iloc[-2]
@@ -125,27 +182,26 @@ def analyze_signal(df):
     # 1. ANALISIS TREN (EMA)
     price_now = last['Close']
     ema200 = last['EMA_200']
-
     if pd.isna(ema200):
         reasons.append("Data EMA 200 belum cukup.")
     else:
         if price_now > ema200:
             gap = ((price_now - ema200) / ema200) * 100
             score += 25
-            reasons.append(f"Harga berada {gap:.1f}% DI ATAS garis tren jangka panjang (EMA 200). Pasar Bullish. ")
+            reasons.append(f"Harga berada {gap:.1f}% DI ATAS garis tren jangka panjang (EMA 200). Pasar Bullish.")
         else:
             gap = ((ema200 - price_now) / ema200) * 100
             score -= 25
-            reasons.append(f"Harga berada {gap:.1f}% DI BAWAH garis tren jangka panjang (EMA 200). Pasar Bearish. ")
+            reasons.append(f"Harga berada {gap:.1f}% DI BAWAH garis tren jangka panjang (EMA 200). Pasar Bearish.")
 
     # Golden Cross / Death Cross
     if pd.notna(last['EMA_50']) and pd.notna(last['EMA_200']):
         if last['EMA_50'] > last['EMA_200']:
             score += 15
-            reasons.append(f"Golden Cross Terkonfirmasi (EMA 50 > EMA 200). Tren menengah kuat. ")
+            reasons.append(f"Golden Cross Terkonfirmasi (EMA 50 > EMA 200). Tren menengah kuat.")
         elif last['EMA_50'] < last['EMA_200']:
             score -= 10
-            reasons.append(f"Death Cross (EMA 50 < EMA 200). Tren menengah lemah. ")
+            reasons.append(f"Death Cross (EMA 50 < EMA 200). Tren menengah lemah.")
 
     # 2. ANALISIS MOMENTUM (RSI)
     rsi = last['RSI']
@@ -154,16 +210,16 @@ def analyze_signal(df):
     else:
         if rsi < 30:
             score += 35
-            reasons.append(f"RSI Sangat Murah (Oversold) di level {rsi:.1f}. Potensi pantulan harga tinggi! ")
+            reasons.append(f"RSI Sangat Murah (Oversold) di level {rsi:.1f}. Potensi pantulan harga tinggi!")
         elif rsi > 70:
             score -= 25
-            reasons.append(f"RSI Sangat Mahal (Overbought) di level {rsi:.1f}. Hati-hati koreksi. ")
+            reasons.append(f"RSI Sangat Mahal (Overbought) di level {rsi:.1f}. Hati-hati koreksi.")
         elif 30 <= rsi <= 50:
             score += 10
-            reasons.append(f"RSI di level {rsi:.1f} (Zona Akumulasi). Masih aman untuk masuk. ")
-        else: # 50-70
+            reasons.append(f"RSI di level {rsi:.1f} (Zona Akumulasi). Masih aman untuk masuk.")
+        else:
             score += 5
-            reasons.append(f"RSI di level {rsi:.1f} (Zona Pertumbuhan). Momentum positif. ")
+            reasons.append(f"RSI di level {rsi:.1f} (Zona Pertumbuhan). Momentum positif.")
 
     # 3. MACD Dynamic
     macd_val = last['MACD']
@@ -173,44 +229,47 @@ def analyze_signal(df):
     else:
         if macd_val > macd_sig:
             score += 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal. Momentum beli aktif. ")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal. Momentum beli aktif.")
         else:
             score -= 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada. ")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada.")
 
     # --- INOVASI: Logika dari Indikator Baru ---
     # 4. Bollinger Bands
     if pd.notna(last['BB_UPPER']) and pd.notna(last['BB_LOWER']):
         if price_now > last['BB_UPPER']:
             score -= 30
-            reasons.append(f"Harga MENEMBUS Band Atas. Potensi overbought, koreksi mungkin terjadi. ")
+            reasons.append(f"Harga MENEMBUS Band Atas. Potensi overbought, koreksi mungkin terjadi.")
         elif price_now < last['BB_LOWER']:
             score += 30
-            reasons.append(f"Harga MENEMBUS Band Bawah. Potensi oversold, bounce mungkin terjadi. ")
+            reasons.append(f"Harga MENEMBUS Band Bawah. Potensi oversold, bounce mungkin terjadi.")
         else:
-            reasons.append(f"Harga berada di dalam Bollinger Bands. Rentang normal. ")
+            reasons.append(f"Harga berada di dalam Bollinger Bands. Rentang normal.")
 
     # 5. ADX (Kekuatan Tren)
     if adx_value > 25:
-        if abs(score) > 20: # Jika skor sudah tinggi (arah kuat)
-            score *= 1.1 # Perkuat sinyal karena tren kuat
-            reasons.append(f"ADX menunjukkan tren sangat kuat (>{adx_value:.1f}). Sinyal dipertegas. ")
+        if abs(score) > 20:
+            score = int(final_score_before_adx * 1.1) # Gunakan skor sebelum ADX dikalikan
+            reasons.append(f"ADX menunjukkan tren sangat kuat (>{adx_value:.1f}). Sinyal dipertegas.")
         else:
-            reasons.append(f"ADX menunjukkan tren sedang ({adx_value:.1f}). Harap konfirmasi sinyal lain. ")
+            reasons.append(f"ADX menunjukkan tren sedang ({adx_value:.1f}). Harap konfirmasi sinyal lain.")
     else:
-        reasons.append(f"ADX menunjukkan tren lemah ({adx_value:.1f}). Sinyal bisa jadi tidak akurat. ")
-
+        reasons.append(f"ADX menunjukkan tren lemah ({adx_value:.1f}). Sinyal bisa jadi tidak akurat.")
 
     # Normalisasi Score 0-100
-    final_score = max(0, min(100, 50 + score))
+    final_score_before_adx = max(0, min(100, 50 + score)) # Simpan skor sebelum modifikasi ADX
+    final_score = final_score_before_adx # Jika ADX tidak memperkuat, gunakan skor asli
+    if adx_value > 25 and abs(final_score_before_adx - 50) > 20: # Jika tren kuat dan sinyal jelas
+        final_score = min(100, max(0, int(final_score_before_adx * 1.1))) # Perkuat skor
+
     return final_score, reasons, volatility
 
 
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v3</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Market Intelligence (Perbaikan Error)</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v4</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Market Intelligence (Final Fix)</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -221,28 +280,22 @@ def main():
 
     # Process Data
     with st.spinner("Menghubungkan ke satelit data global..."):
-        # Ambil Kurs
         usd_idr = get_exchange_rate()
         st.sidebar.metric("Kurs USD/IDR Hari Ini", f"Rp {usd_idr:,.0f}")
-
-        # Ambil Data Market
         df = get_market_data(asset_info['ticker'])
 
-    if df is not None:
+    if df is not None and not df.empty:
         last_close_usd = df['Close'].iloc[-1]
         prev_close_usd = df['Close'].iloc[-2]
         change_pct = ((last_close_usd - prev_close_usd) / prev_close_usd) * 100
 
-        # --- LOGIKA KONVERSI HARGA (VERSION 2.0) ---
+        # --- LOGIKA KONVERSI HARGA ---
         if asset_info['is_gold']:
-            # Konversi Emas Dunia (Troy Ounce) ke Emas Pluang (Gram)
-            # 1 Troy Ounce = 31.1035 Gram
             price_idr = (last_close_usd / 31.1035) * usd_idr
-            price_usd_display = last_close_usd # Tetap tampilkan harga per Ounce utk referensi
+            price_usd_display = last_close_usd
             unit_label = "/ gram"
             usd_label = "/ troy oz"
         else:
-            # Konversi Aset Lain (Saham/Crypto) langsung kali kurs
             price_idr = last_close_usd * usd_idr
             price_usd_display = last_close_usd
             unit_label = "/ unit"
@@ -259,7 +312,6 @@ def main():
             st.markdown(f"<div class='price-box'><div class='small-font'>Harga Global (USD)</div><div class='big-font' style='color:#FFD700'>${price_usd_display:,.2f}</div><div class='small-font'>{usd_label}</div></div>", unsafe_allow_html=True)
 
         with c3:
-            # Perubahan Harga
             color = "green" if change_pct >= 0 else "red"
             st.markdown(f"<div class='price-box'><div class='small-font'>Perubahan 24 Jam</div><div class='big-font' style='color:{color}'>{change_pct:+.2f}%</div><div class='small-font'>vs Kemarin</div></div>", unsafe_allow_html=True)
 
@@ -302,51 +354,43 @@ def main():
             st.write(" ")
             st.caption("🔍 **Alasan Logis (Berdasarkan Data Live):**")
             for reason in reasons:
-                 # --- Highlight untuk kondisi penting ---
-                 highlight_color = ""
-                 if "Oversold" in reason or "bounce" in reason.lower() or "oversold" in reason.lower():
-                     highlight_color = "background-color: rgba(0, 255, 0, 0.2); padding: 2px 4px; border-radius: 3px;"
+                 hl_class = ""
+                 if "Oversold" in reason or "bounce" in reason.lower():
+                     hl_class = "hl-oversold"
                  elif "Overbought" in reason or "koreksi" in reason.lower() or "menembus band atas" in reason.lower():
-                     highlight_color = "background-color: rgba(255, 75, 75, 0.2); padding: 2px 4px; border-radius: 3px;"
+                     hl_class = "hl-overbought"
                  elif "tren sangat kuat" in reason.lower():
-                     highlight_color = "background-color: rgba(255, 215, 0, 0.2); padding: 2px 4px; border-radius: 3px;"
-                 # --- PERBAIKAN: Gunakan st.markdown untuk HTML ---
-                 st.markdown(f"<p style='margin-bottom: 0.2em;'>• <span style='{highlight_color}'>{reason}</span></p>", unsafe_allow_html=True)
+                     hl_class = "hl-strong-trend"
+                 # --- PERBAIKAN FINAL: Gunakan st.markdown dengan kelas CSS ---
+                 st.markdown(f"<p class='signal-reason'>• <span class='{hl_class}'>{reason}</span></p>", unsafe_allow_html=True)
 
 
         with cols_risk:
-             # --- INOVASI: Tampilan Risiko ---
-             risk_level_str = ""
-             risk_style = ""
-             if volatility == 0:
-                 risk_level_str = "N/A"
-                 risk_style = "risk-medium"
-             elif volatility < (last_close_usd * 0.02): # Contoh threshold rendah
-                 risk_level_str = "Rendah"
-                 risk_style = "risk-low"
-             elif volatility < (last_close_usd * 0.05): # Contoh threshold sedang
-                 risk_level_str = "Sedang"
-                 risk_style = "risk-medium"
-             else:
-                 risk_level_str = "Tinggi"
-                 risk_style = "risk-high"
+             risk_level_str = "N/A"
+             risk_style = "risk-medium"
+             if volatility != 0: # Pastikan bukan N/A atau 0
+                 if volatility < (last_close_usd * 0.02):
+                     risk_level_str = "Rendah"
+                     risk_style = "risk-low"
+                 elif volatility < (last_close_usd * 0.05):
+                     risk_level_str = "Sedang"
+                     risk_style = "risk-medium"
+                 else:
+                     risk_level_str = "Tinggi"
+                     risk_style = "risk-high"
 
              st.markdown(f"<div class='info-card'><h4>📊 Risiko (Volatilitas 30D)</h4><p class='medium-font'>{risk_level_str}</p><p class='small-font'>Std Dev: ${volatility:.2f}</p></div>", unsafe_allow_html=True)
-             st.markdown(f"<div class='info-card'><h4>🧭 Kekuatan Tren (ADX)</h4><p class='medium-font'>{df['ADX'].iloc[-1]:.1f}</p><p class='small-font'>{'Lemah (<25)' if df['ADX'].iloc[-1] < 25 else ('Sedang (25-50)' if df['ADX'].iloc[-1] < 50 else 'Kuat (>50)')}</p></div>", unsafe_allow_html=True)
+             adx_val = df['ADX'].iloc[-1] if pd.notna(df['ADX'].iloc[-1]) else 0.0
+             adx_status = "Lemah" if adx_val < 25 else ("Sedang" if adx_val < 50 else "Kuat")
+             st.markdown(f"<div class='info-card'><h4>🧭 Kekuatan Tren (ADX)</h4><p class='medium-font'>{adx_val:.1f}</p><p class='small-font'>{adx_status} ({'<25' if adx_val < 25 else ('25-50' if adx_val < 50 else '>50')})</p></div>", unsafe_allow_html=True)
 
 
         # 3. CHART UTAMA dengan Bollinger Bands
         st.markdown("### 📉 Grafik Teknikal Lanjutan")
         fig = go.Figure()
-
-        # Candlestick
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price USD', opacity=0.8))
-
-        # EMAs
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50', visible='legendonly')) # Default hidden
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='blue', width=2), name='EMA 200', visible='legendonly')) # Default hidden
-
-        # --- INOVASI: Tambahkan Bollinger Bands ke chart ---
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50', visible='legendonly'))
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='blue', width=2), name='EMA 200', visible='legendonly'))
         fig.add_trace(go.Scatter(x=df.index, y=df['BB_UPPER'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1), name='BB Upper', fill=None))
         fig.add_trace(go.Scatter(x=df.index, y=df['BB_LOWER'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name='BB Lower', fill='tonexty'))
 
@@ -355,13 +399,7 @@ def main():
             height=600,
             template="plotly_dark",
             title=f"Pergerakan Global {selected_asset_name} (Basis USD) dengan Bollinger Bands",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -371,9 +409,8 @@ def main():
         latest_data.index = [latest_data.index[-1].strftime('%Y-%m-%d')]
         st.dataframe(latest_data, use_container_width=True)
 
-
     else:
-        st.error("Gagal mengambil data. Silakan refresh halaman atau pilih aset lain.")
+        st.error("Gagal mengambil data atau data kosong. Silakan refresh halaman atau pilih aset lain.")
 
 
 if __name__ == "__main__":
