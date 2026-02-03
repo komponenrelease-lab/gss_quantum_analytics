@@ -7,14 +7,13 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v4 - Final Fix",
+    page_title="GSS Quantum Analytics v5 - Final (ATR)",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- CSS CUSTOM (Tampilan Profesional GSS) ---
-# CSS ditempatkan di awal setelah konfigurasi halaman
 st.markdown("""
 <style>
     .main-header { 
@@ -98,6 +97,7 @@ st.markdown("""
     .hl-overbought { background-color: rgba(255, 75, 75, 0.2); padding: 2px 4px; border-radius: 3px; }
     .hl-oversold { background-color: rgba(0, 255, 0, 0.2); padding: 2px 4px; border-radius: 3px; }
     .hl-strong-trend { background-color: rgba(255, 215, 0, 0.2); padding: 2px 4px; border-radius: 3px; }
+    .hl-volatility-info { background-color: rgba(135, 206, 250, 0.2); padding: 2px 4px; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -149,7 +149,7 @@ def get_market_data(ticker, period="1y"):
             df['MACD'] = macd.iloc[:, 0]
             df['MACD_SIGNAL'] = macd.iloc[:, 2]
 
-        # --- INOVASI: Indikator Baru ---
+        # --- INOVASI SEBELUMNYA: Indikator Baru ---
         bb = ta.bbands(df['Close'], length=20, std=2)
         if bb is not None:
             df['BB_UPPER'] = bb.iloc[:, 0]
@@ -162,6 +162,18 @@ def get_market_data(ticker, period="1y"):
 
         df['VOLATILITY_30D'] = df['Close'].rolling(window=30).std()
 
+        # --- INOVASI BARU: Average True Range (ATR) ---
+        # Pandas-ta memiliki fungsi ATR built-in
+        atr = ta.atr(df['High'], df['Low'], df['Close'], length=14)
+        if atr is not None:
+            df['ATR'] = atr
+        else:
+            # Fallback manual jika pandas_ta gagal
+            df['True_Range'] = df['High'] - df['Low']
+            df['True_Range'] = df['True_Range'].combine(df['High'] - df['Close'].shift(), lambda x, y: max(x, abs(y)), fill_value=0)
+            df['True_Range'] = df['True_Range'].combine(df['Close'].shift() - df['Low'], lambda x, y: max(x, abs(y)), fill_value=0)
+            df['ATR'] = df['True_Range'].rolling(window=14).mean()
+
         return df
 
     except Exception as e:
@@ -170,7 +182,7 @@ def get_market_data(ticker, period="1y"):
 
 def analyze_signal(df):
     """Analisis Sinyal Dinamis (Bukan Template)."""
-    if df is None: return 50, ["Data tidak tersedia"], 0.0
+    if df is None: return 50, ["Data tidak tersedia"], 0.0, 0.0
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -178,6 +190,7 @@ def analyze_signal(df):
     reasons = []
     volatility = last['VOLATILITY_30D'] if pd.notna(last['VOLATILITY_30D']) else 0.0
     adx_value = last['ADX'] if pd.notna(last['ADX']) else 0.0
+    atr_value = last['ATR'] if pd.notna(last['ATR']) else 0.0 # Ambil nilai ATR
 
     # 1. ANALISIS TREN (EMA)
     price_now = last['Close']
@@ -234,7 +247,7 @@ def analyze_signal(df):
             score -= 20
             reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada.")
 
-    # --- INOVASI: Logika dari Indikator Baru ---
+    # --- INOVASI SEBELUMNYA: Logika dari Indikator Baru ---
     # 4. Bollinger Bands
     if pd.notna(last['BB_UPPER']) and pd.notna(last['BB_LOWER']):
         if price_now > last['BB_UPPER']:
@@ -249,27 +262,37 @@ def analyze_signal(df):
     # 5. ADX (Kekuatan Tren)
     if adx_value > 25:
         if abs(score) > 20:
-            score = int(final_score_before_adx * 1.1) # Gunakan skor sebelum ADX dikalikan
+            score = int(max(0, min(100, (50 + score) * 1.1))) # Gunakan skor sebelum ADX dikalikan
             reasons.append(f"ADX menunjukkan tren sangat kuat (>{adx_value:.1f}). Sinyal dipertegas.")
         else:
             reasons.append(f"ADX menunjukkan tren sedang ({adx_value:.1f}). Harap konfirmasi sinyal lain.")
     else:
         reasons.append(f"ADX menunjukkan tren lemah ({adx_value:.1f}). Sinyal bisa jadi tidak akurat.")
 
-    # Normalisasi Score 0-100
-    final_score_before_adx = max(0, min(100, 50 + score)) # Simpan skor sebelum modifikasi ADX
-    final_score = final_score_before_adx # Jika ADX tidak memperkuat, gunakan skor asli
-    if adx_value > 25 and abs(final_score_before_adx - 50) > 20: # Jika tren kuat dan sinyal jelas
-        final_score = min(100, max(0, int(final_score_before_adx * 1.1))) # Perkuat skor
+    # --- INOVASI BARU: Logika berdasarkan ATR ---
+    # 6. ATR (Average True Range / Volatilitas)
+    if atr_value > 0:
+        price_change_abs = abs(price_now - prev['Close'])
+        if price_change_abs > atr_value:
+            reasons.append(f"Pergerakan harga (${price_change_abs:.2f}) MELEBIHI ATR (${atr_value:.2f}), menunjukkan aktivitas tinggi.")
+        elif price_change_abs < atr_value * 0.5:
+            reasons.append(f"Pergerakan harga (${price_change_abs:.2f}) di bawah separuh ATR, menunjukkan konsolidasi.")
+        reasons.append(f"Level volatilitas saat ini (ATR 14d): ${atr_value:.2f}. Ini penting untuk manajemen risiko (Stop-Loss).")
+    else:
+        reasons.append("Data ATR tidak tersedia untuk analisis volatilitas.")
 
-    return final_score, reasons, volatility
+
+    # Normalisasi Score 0-100 (akhir setelah semua modifikasi)
+    final_score = max(0, min(100, 50 + score))
+
+    return final_score, reasons, volatility, atr_value
 
 
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v4</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Market Intelligence (Final Fix)</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v5</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Intelligence (ATR Added)</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -317,8 +340,8 @@ def main():
 
         st.markdown("---")
 
-        # 2. ANALISIS QUANTUM SCORE & VOLATILITAS
-        score, reasons, volatility = analyze_signal(df)
+        # 2. ANALISIS QUANTUM SCORE, VOLATILITAS, dan ATR
+        score, reasons, volatility, atr = analyze_signal(df) # Terima nilai ATR
 
         st.markdown("### 🔮 Quantum Signal & Risk Analysis")
         cols_sig1, cols_sig2, cols_risk = st.columns([1, 2, 1])
@@ -361,14 +384,17 @@ def main():
                      hl_class = "hl-overbought"
                  elif "tren sangat kuat" in reason.lower():
                      hl_class = "hl-strong-trend"
-                 # --- PERBAIKAN FINAL: Gunakan st.markdown dengan kelas CSS ---
+                 elif "ATR" in reason:
+                     hl_class = "hl-volatility-info"
+                 # --- Gunakan st.markdown dengan kelas CSS ---
                  st.markdown(f"<p class='signal-reason'>• <span class='{hl_class}'>{reason}</span></p>", unsafe_allow_html=True)
 
 
         with cols_risk:
+             # --- Informasi Risiko & ATR ---
              risk_level_str = "N/A"
              risk_style = "risk-medium"
-             if volatility != 0: # Pastikan bukan N/A atau 0
+             if volatility != 0:
                  if volatility < (last_close_usd * 0.02):
                      risk_level_str = "Rendah"
                      risk_style = "risk-low"
@@ -380,9 +406,17 @@ def main():
                      risk_style = "risk-high"
 
              st.markdown(f"<div class='info-card'><h4>📊 Risiko (Volatilitas 30D)</h4><p class='medium-font'>{risk_level_str}</p><p class='small-font'>Std Dev: ${volatility:.2f}</p></div>", unsafe_allow_html=True)
+             
              adx_val = df['ADX'].iloc[-1] if pd.notna(df['ADX'].iloc[-1]) else 0.0
              adx_status = "Lemah" if adx_val < 25 else ("Sedang" if adx_val < 50 else "Kuat")
              st.markdown(f"<div class='info-card'><h4>🧭 Kekuatan Tren (ADX)</h4><p class='medium-font'>{adx_val:.1f}</p><p class='small-font'>{adx_status} ({'<25' if adx_val < 25 else ('25-50' if adx_val < 50 else '>50')})</p></div>", unsafe_allow_html=True)
+
+             # --- INOVASI BARU: Tampilkan ATR ---
+             atr_val = df['ATR'].iloc[-1] if pd.notna(df['ATR'].iloc[-1]) else 0.0
+             if atr_val > 0:
+                 st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>${atr_val:.2f}</p><p class='small-font'>Rentang rata-rata pergerakan.</p></div>", unsafe_allow_html=True)
+             else:
+                 st.markdown(f"<div class='info-card'><h4>🌪️ Volatilitas (ATR 14D)</h4><p class='medium-font'>N/A</p><p class='small-font'>Data tidak tersedia.</p></div>", unsafe_allow_html=True)
 
 
         # 3. CHART UTAMA dengan Bollinger Bands
@@ -405,7 +439,7 @@ def main():
 
         # --- INOVASI: Tabel Data Terbaru ---
         st.markdown("### 🧮 Data Terbaru (Termasuk Indikator Baru)")
-        latest_data = df[['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'BB_UPPER', 'BB_LOWER', 'ADX']].tail(1).round(2)
+        latest_data = df[['Close', 'EMA_20', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'BB_UPPER', 'BB_LOWER', 'ADX', 'ATR']].tail(1).round(2)
         latest_data.index = [latest_data.index[-1].strftime('%Y-%m-%d')]
         st.dataframe(latest_data, use_container_width=True)
 
