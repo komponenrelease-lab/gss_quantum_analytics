@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="GSS Quantum Analytics v8 - Final Fix",
+    page_title="GSS Quantum Analytics v9 - Confidence Level",
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -37,6 +37,14 @@ st.markdown("""
         font-weight: bold; 
         margin-bottom: 1rem;
     }
+    .confidence-box { 
+        padding: 10px; 
+        border-radius: 8px; 
+        text-align: center; 
+        font-size: 1.2rem; 
+        font-weight: bold; 
+        margin-top: 0.5rem;
+    }
     .price-box { 
         background-color: #1E1E1E; 
         padding: 15px; 
@@ -58,6 +66,21 @@ st.markdown("""
         background-color: #4d4d00; 
         color: #ffff00; 
         border: 2px solid #ffff00; 
+    }
+    .confidence-high { 
+        background-color: #003300; 
+        color: #00ff00; 
+        border: 1px solid #00aa00; 
+    }
+    .confidence-medium { 
+        background-color: #4d4d00; 
+        color: #ffff00; 
+        border: 1px solid #aaaa00; 
+    }
+    .confidence-low { 
+        background-color: #4d4d00; 
+        color: #ff8c00; 
+        border: 1px solid #ff8c00; 
     }
     .risk-high { 
         background-color: #4d0000; 
@@ -187,13 +210,16 @@ def convert_price_to_idr(price_usd, is_gold, usd_idr_rate):
         return price_usd * usd_idr_rate
 
 def analyze_signal(df, asset_is_gold, usd_idr_rate):
-    """Analisis Sinyal Dinamis dengan integrasi nilai IDR."""
-    if df is None: return 50, ["Data tidak tersedia"], 0.0, 0.0
+    """Analisis Sinyal Dinamis dengan integrasi nilai IDR dan Confidence Level."""
+    if df is None: return 50, ["Data tidak tersedia"], 0.0, 0.0, 0
+
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
     score = 0
     reasons = []
+    confidence_points = 0 # Tambahkan variabel untuk menghitung kepercayaan
+
     volatility = last['VOLATILITY_30D'] if pd.notna(last['VOLATILITY_30D']) else 0.0
     adx_value = last['ADX'] if pd.notna(last['ADX']) else 0.0
     atr_value = last['ATR'] if pd.notna(last['ATR']) else 0.0
@@ -217,19 +243,23 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
             gap = ((price_now - ema200) / ema200) * 100
             score += 25
             reasons.append(f"Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}) berada {gap:.1f}% DI ATAS garis tren jangka panjang (EMA 200: ${ema200:.2f} / Rp {ema200_idr:,.0f}). Pasar Bullish.")
+            if last['EMA_50'] > ema200: # Konfirmasi tren menengah
+                confidence_points += 1
+                reasons.append("  -> EMA 50 > EMA 200, konfirmasi tren menengah naik.")
         else:
             gap = ((ema200 - price_now) / ema200) * 100
             score -= 25
             reasons.append(f"Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}) berada {gap:.1f}% DI BAWAH garis tren jangka panjang (EMA 200: ${ema200:.2f} / Rp {ema200_idr:,.0f}). Pasar Bearish.")
+            if last['EMA_50'] < ema200: # Konfirmasi tren menengah
+                confidence_points += 1
+                reasons.append("  -> EMA 50 < EMA 200, konfirmasi tren menengah turun.")
 
-    # Golden Cross / Death Cross
+    # Golden Cross / Death Cross (telah dihitung dalam EMA)
     if pd.notna(last['EMA_50']) and pd.notna(last['EMA_200']):
         if last['EMA_50'] > last['EMA_200']:
             score += 15
-            reasons.append(f"Golden Cross Terkonfirmasi (EMA 50 > EMA 200). Tren menengah kuat.")
         elif last['EMA_50'] < last['EMA_200']:
             score -= 10
-            reasons.append(f"Death Cross (EMA 50 < EMA 200). Tren menengah lemah.")
 
     # 2. ANALISIS MOMENTUM (RSI)
     rsi = last['RSI']
@@ -239,13 +269,15 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
         if rsi < 30:
             score += 35
             reasons.append(f"RSI Sangat Murah (Oversold) di level {rsi:.1f}. Potensi pantulan harga tinggi! Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            confidence_points += 1 # Oversold adalah sinyal kuat
         elif rsi > 70:
             score -= 25
             reasons.append(f"RSI Sangat Mahal (Overbought) di level {rsi:.1f}. Hati-hati koreksi. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            confidence_points += 1 # Overbought adalah sinyal kuat
         elif 30 <= rsi <= 50:
             score += 10
             reasons.append(f"RSI di level {rsi:.1f} (Zona Akumulasi). Masih aman untuk masuk. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
-        else:
+        else: # 50-70
             score += 5
             reasons.append(f"RSI di level {rsi:.1f} (Zona Pertumbuhan). Momentum positif. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
 
@@ -257,10 +289,12 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
     else:
         if macd_val > macd_sig:
             score += 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal. Momentum beli aktif. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di atas Signal ({macd_sig:.2f}). Momentum beli aktif. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            confidence_points += 1 # MACD crossover adalah sinyal kuat
         else:
             score -= 20
-            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal. Tekanan jual masih ada. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            reasons.append(f"MACD Line ({macd_val:.2f}) di bawah Signal ({macd_sig:.2f}). Tekanan jual masih ada. Harga (${price_now:.2f} / Rp {price_now_idr:,.0f}).")
+            confidence_points += 1 # MACD crossover adalah sinyal kuat
 
     # --- INOVASI SEBELUMNYA: Logika dari Indikator Baru ---
     # 4. Bollinger Bands
@@ -268,21 +302,26 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
         if price_now > last['BB_UPPER']:
             score -= 30
             reasons.append(f"Harga MENEMBUS Band Atas (${last['BB_UPPER']:.2f} / Rp {bb_upper_idr:,.0f}). Potensi overbought, koreksi mungkin terjadi.")
+            confidence_points += 1 # Breakout atas adalah sinyal kuat
         elif price_now < last['BB_LOWER']:
             score += 30
             reasons.append(f"Harga MENEMBUS Band Bawah (${last['BB_LOWER']:.2f} / Rp {bb_lower_idr:,.0f}). Potensi oversold, bounce mungkin terjadi.")
+            confidence_points += 1 # Breakout bawah adalah sinyal kuat
         else:
             reasons.append(f"Harga berada di dalam Bollinger Bands. Rentang normal (${last['BB_LOWER']:.2f} - ${last['BB_UPPER']:.2f} / Rp {bb_lower_idr:,.0f} - Rp {bb_upper_idr:,.0f}).")
 
     # 5. ADX (Kekuatan Tren)
     if adx_value > 25:
-        if abs(score) > 20:
-            score = int(max(0, min(100, (50 + score) * 1.1)))
+        if abs(score) > 20: # Jika skor sudah menunjukkan arah jelas
+            score = int(max(0, min(100, (50 + score) * 1.1))) # Perkuat sinyal karena tren kuat
             reasons.append(f"ADX menunjukkan tren sangat kuat (>{adx_value:.1f}). Sinyal dipertegas.")
+            confidence_points += 1 # Tren kuat meningkatkan kepercayaan
         else:
             reasons.append(f"ADX menunjukkan tren sedang ({adx_value:.1f}). Harap konfirmasi sinyal lain.")
     else:
         reasons.append(f"ADX menunjukkan tren lemah ({adx_value:.1f}). Sinyal bisa jadi tidak akurat.")
+        # Tidak menambah confidence_points karena tren lemah
+
 
     # --- INOVASI: Logika berdasarkan ATR ---
     # 6. ATR (Average True Range / Volatilitas)
@@ -295,21 +334,34 @@ def analyze_signal(df, asset_is_gold, usd_idr_rate):
         elif price_change_abs < atr_value * 0.5:
             reasons.append(f"Pergerakan harga (${price_change_abs:.2f} / Rp {price_change_abs_idr:,.0f}) di bawah separuh ATR, menunjukkan konsolidasi.")
         reasons.append(f"Level volatilitas saat ini (ATR 14d): ${atr_value:.2f} / Rp {atr_value_idr:.0f}. Ini penting untuk manajemen risiko (Stop-Loss).")
-    else:
-        reasons.append("Data ATR tidak tersedia untuk analisis volatilitas.")
 
 
     # Normalisasi Score 0-100 (akhir setelah semua modifikasi)
     final_score = max(0, min(100, 50 + score))
 
-    return final_score, reasons, volatility_idr, atr_value_idr
+    # --- INOVASI: Hitung Tingkat Kepercayaan ---
+    # Misalnya, 0-2 poin = Rendah, 3-4 = Sedang, 5+ = Tinggi
+    if confidence_points >= 5:
+        confidence_level = 3 # Tinggi
+        confidence_text = "Tinggi"
+        confidence_style = "confidence-high"
+    elif confidence_points >= 3:
+        confidence_level = 2 # Sedang
+        confidence_text = "Sedang"
+        confidence_style = "confidence-medium"
+    else:
+        confidence_level = 1 # Rendah
+        confidence_text = "Rendah"
+        confidence_style = "confidence-low"
+
+    return final_score, reasons, volatility_idr, atr_value_idr, confidence_level
 
 
 # --- UI VISUALIZATION ---
 def main():
     # Header
-    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v8</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Gold Standard Society - ID-Friendly Market Intelligence (Final Fix)</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🦅 GSS QUANTUM ANALYTICS v9</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Gold Standard Society - Enhanced Analysis with Confidence</p>", unsafe_allow_html=True)
 
     # Sidebar
     st.sidebar.header("🎛️ Kontrol Panel")
@@ -351,8 +403,8 @@ def main():
 
         st.markdown("---")
 
-        # 2. ANALISIS QUANTUM SCORE, VOLATILITAS, dan ATR (dengan nilai IDR)
-        score, reasons, volatility_idr, atr_idr = analyze_signal(df, asset_info["is_gold"], usd_idr)
+        # 2. ANALISIS QUANTUM SCORE, VOLATILITAS, ATR, dan CONFIDENCE LEVEL
+        score, reasons, volatility_idr, atr_idr, confidence_level = analyze_signal(df, asset_info["is_gold"], usd_idr)
 
         st.markdown("### 🔮 Quantum Signal & Risk Analysis")
         cols_sig1, cols_sig2, cols_risk = st.columns([1, 2, 1])
@@ -384,6 +436,16 @@ def main():
                 st.markdown(f"<div class='signal-box sell-signal'>STRONG SELL 🛑<br><span style='font-size:1rem'>Pasar Sedang Jatuh</span></div>", unsafe_allow_html=True)
             else:
                 st.markdown(f"<div class='signal-box neutral-signal'>NEUTRAL / WAIT ✋<br><span style='font-size:1rem'>Tunggu Konfirmasi</span></div>", unsafe_allow_html=True)
+
+            # --- INOVASI: Tampilkan Tingkat Kepercayaan ---
+            if confidence_level == 3:
+                conf_text = "Tingkat Kepercayaan: Sangat Tinggi (✅✅✅)"
+            elif confidence_level == 2:
+                conf_text = "Tingkat Kepercayaan: Sedang (✅✅)"
+            else:
+                conf_text = "Tingkat Kepercayaan: Rendah (✅)"
+
+            st.markdown(f"<div class='confidence-box {'' if confidence_level == 3 else ('' if confidence_level == 2 else '')}'>{conf_text}</div>", unsafe_allow_html=True)
 
             st.write(" ")
             st.caption("🔍 **Alasan Logis (Berdasarkan Data Live - USD & IDR):**")
@@ -470,7 +532,6 @@ def main():
         latest_data_idr_df = pd.DataFrame([idr_cols], index=latest_data_usd.index)
 
         # Gabungkan USD dan Estimasi IDR
-        # Penting: Gunakan concat dengan suffix untuk menghindari konflik nama
         latest_data_combined = pd.concat([latest_data_usd.add_suffix('_Usd'), latest_data_idr_df], axis=1)
         # Format ulang kolom Rupiah untuk tampilan (dengan koma)
         cols_to_format = [col for col in latest_data_combined.columns if col.endswith('_Rp')]
@@ -484,6 +545,14 @@ def main():
                      latest_data_combined[col] = latest_data_combined[col].apply(lambda x: f"Rp {x:,.0f}")
 
         st.dataframe(latest_data_combined, use_container_width=True)
+
+        # --- INOVASI: Penjelasan Tingkat Kepercayaan ---
+        st.markdown("### ℹ️ Panduan Tingkat Kepercayaan")
+        st.info(
+            "**Tinggi (✅✅✅):** Banyak indikator teknikal (RSI, MACD, EMA, ADX, Bollinger Bands) menunjukkan arah yang sama, meningkatkan probabilitas akurasi sinyal.\n\n"
+            "**Sedang (✅✅):** Beberapa indikator mendukung sinyal utama, tetapi ada sedikit ketidakpastian atau konflik minor.\n\n"
+            "**Rendah (✅):** Sinyal utama hadir, tetapi kurang didukung oleh indikator lainnya, atau ada banyak konflik antar-indikator. Disarankan untuk menunggu konfirmasi lebih lanjut."
+        )
 
 
     else:
